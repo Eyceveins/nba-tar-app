@@ -28,13 +28,10 @@ def get_season_stats(year):
     df = clean_dataframe(df)
     df = df[df["Player"] != "Player"]
 
-    team_col = next((c for c in ["Tm", "Team", "team"] if c in df.columns), None)
-    if team_col:
-        df.rename(columns={team_col: "Tm"}, inplace=True)
-
     non_numeric = ["Player", "Pos", "Tm"]
     numeric_cols = df.columns.drop([c for c in non_numeric if c in df.columns])
     df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors="coerce")
+
     return df
 
 @st.cache_data(show_spinner=False)
@@ -44,13 +41,10 @@ def get_advanced_stats(year):
     df = clean_dataframe(df)
     df = df[df["Player"] != "Player"]
 
-    team_col = next((c for c in ["Tm", "Team", "team"] if c in df.columns), None)
-    if team_col:
-        df.rename(columns={team_col: "Tm"}, inplace=True)
-
     non_numeric = ["Player", "Pos", "Tm"]
     numeric_cols = df.columns.drop([c for c in non_numeric if c in df.columns])
     df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors="coerce")
+
     return df
 
 # -----------------------------
@@ -77,72 +71,75 @@ def calculate_tar(player, year):
         "TS%_adv": "TS%",
         "DRtg_adv": "DRtg",
         "3PAr_adv": "3PAr",
-        "FTr_adv": "FTr"
+        "FTr_adv": "FTr",
+        "Pos_poss": "Pos"
     }
     df.rename(columns=rename_map, inplace=True)
 
-    player_cleaned = clean_player_name(player)
-    if player_cleaned not in df["Player_clean"].values:
-        raise ValueError(f"Player '{player}' not found for {year} season.")
+    player_clean = clean_player_name(player)
+    if player_clean not in df["Player_clean"].values:
+        raise ValueError(f"Player '{player}' not found for {year}")
 
-    p = df[df["Player_clean"] == player_cleaned].iloc[0]
-
-    pos_col = "Pos_poss" if "Pos_poss" in df.columns else "Pos"
-    pos = p[pos_col]
-
-    pos_filter = df[pos_col] == pos
-
-    ts_avg = league_avg(df[pos_filter]["TS%"])
-    pts_avg = league_avg(df[pos_filter]["PTS"])
-    orb_avg = league_avg(df[pos_filter]["ORB"])
-    tov_avg = league_avg(df[pos_filter]["TOV"])
-    ast_avg = league_avg(df[pos_filter]["AST"])
-    drb_avg = league_avg(df[pos_filter]["DRB"])
-    stl_avg = league_avg(df[pos_filter]["STL"])
-    blk_avg = league_avg(df[pos_filter]["BLK"])
-    drtg_avg = league_avg(df[pos_filter]["DRtg"])
-    mp_avg = league_avg(df[pos_filter]["MP"])
-    threepar_avg = league_avg(df[pos_filter]["3PAr"]) if "3PAr" in df.columns else 0.2
-    ftr_avg = league_avg(df[pos_filter]["FTr"]) if "FTr" in df.columns else 0.2
+    p = df[df["Player_clean"] == player_clean].iloc[0]
 
     # -----------------------------
-    # Offensive Rating (AOR)
+    # POSITION-BASED LEAGUE AVERAGES
+    # -----------------------------
+    pos_df = df[(df["Pos"] == p["Pos"]) & (df["MP"] > 500)]
+
+    ts_avg = league_avg(pos_df["TS%"])
+    pts_avg = league_avg(pos_df["PTS"])
+    ast_avg = league_avg(pos_df["AST"])
+    orb_avg = league_avg(pos_df["ORB"])
+    drb_avg = league_avg(pos_df["DRB"])
+    tov_avg = league_avg(pos_df["TOV"])
+    stl_avg = league_avg(pos_df["STL"])
+    blk_avg = league_avg(pos_df["BLK"])
+    drtg_avg = league_avg(pos_df["DRtg"])
+    mp_avg = league_avg(pos_df["MP"])
+    threepar_avg = league_avg(pos_df["3PAr"])
+    ftr_avg = league_avg(pos_df["FTr"])
+
+    # -----------------------------
+    # OFFENSIVE RATING (AOR)
     # -----------------------------
     ts_factor = p["TS%"] / ts_avg
     scoring_factor = p["PTS"] / pts_avg
+    creation_factor = p["AST"] / ast_avg
     orb_factor = p["ORB"] / orb_avg
     tov_factor = tov_avg / p["TOV"] if p["TOV"] > 0 else 1
-    creation_factor = p["AST"] / ast_avg
 
     shooting_factor = 1 + (
-        (p.get("3PAr", 0) / threepar_avg +
-         p.get("FTr", 0) / ftr_avg) / 2
+        ((p["3PAr"] / threepar_avg) + (p["FTr"] / ftr_avg)) / 4
     )
 
     AOR = (
-        0.25 * ts_factor +
+        0.30 * ts_factor +
         0.25 * scoring_factor +
-        0.15 * orb_factor +
-        0.15 * tov_factor +
-        0.20 * creation_factor
-    ) * shooting_factor
+        0.25 * creation_factor +
+        0.10 * orb_factor +
+        0.10 * tov_factor
+    )
+
+    AOR *= shooting_factor
+    AOR = min(AOR, 2.2)  # hard offensive cap
 
     # -----------------------------
-    # Defensive Rating (ADR)
+    # DEFENSIVE RATING (ADR)
     # -----------------------------
     drtg_factor = math.sqrt(drtg_avg / p["DRtg"])
     drb_factor = min(p["DRB"] / drb_avg, 1.6)
     stl_factor = min(p["STL"] / stl_avg, 1.6)
     blk_factor = min(p["BLK"] / blk_avg, 1.6)
 
-    if pos in ["PG", "SG"]:
+    if p["Pos"] in ["PG", "SG"]:
         ADR = (
             0.45 * drtg_factor +
             0.35 * stl_factor +
             0.15 * drb_factor +
             0.05 * blk_factor
         )
-    elif pos == "SF":
+    elif p["Pos"] == "SF":
         ADR = (
             0.40 * drtg_factor +
             0.25 * drb_factor +
@@ -157,6 +154,9 @@ def calculate_tar(player, year):
             0.25 * blk_factor
         )
 
+    # -----------------------------
+    # FINAL TAR
+    # -----------------------------
     minute_factor = min(1.0, p["MP"] / mp_avg)
     TAR = AOR * ADR * minute_factor
 
@@ -165,7 +165,7 @@ def calculate_tar(player, year):
         "ADR": round(ADR, 3),
         "TAR": round(TAR, 3),
         "MP": round(p["MP"], 1),
-        "ShootingFactor": round(shooting_factor, 3)
+        "Position": p["Pos"]
     }
 
 # -----------------------------
@@ -178,14 +178,10 @@ st.markdown(
     <style>
     .stApp { background-color: #0D1117; color: white; }
     .stTextInput>div>input, .stNumberInput>div>input {
-        background-color: #1E1E1E;
-        color: white;
-        border: 1px solid #444;
+        background-color: #1E1E1E; color: white;
     }
     .stButton>button {
-        background-color: #FF4500;
-        color: white;
-        font-weight: bold;
+        background-color: #FF4500; color: white; font-weight: bold;
     }
     </style>
     """,
@@ -193,16 +189,17 @@ st.markdown(
 )
 
 st.title("🏀 NBA TAR Player Comparison")
-st.write("Compare players across seasons using Total Adjusted Rating (TAR).")
+st.write("Total Adjusted Rating (TAR): position-normalized offensive and defensive impact.")
 
 col1, col2 = st.columns(2)
+
 with col1:
     player_a = st.text_input("Player A")
-    year_a = st.number_input("Season A", 1950, 2025, 2016)
+    year_a = st.number_input("Season A", 1950, 2025, 2019)
 
 with col2:
     player_b = st.text_input("Player B")
-    year_b = st.number_input("Season B", 1950, 2025, 2024)
+    year_b = st.number_input("Season B", 1950, 2025, 2023)
 
 if st.button("Compare Players"):
     try:
@@ -213,16 +210,17 @@ if st.button("Compare Players"):
         with c1:
             st.subheader(f"{player_a} ({year_a})")
             st.write(a)
+
         with c2:
             st.subheader(f"{player_b} ({year_b})")
             st.write(b)
 
         if a["TAR"] > b["TAR"]:
-            st.success(f"🏆 {player_a} wins")
+            st.success(f"🏆 {player_a} has the higher TAR")
         elif b["TAR"] > a["TAR"]:
-            st.success(f"🏆 {player_b} wins")
+            st.success(f"🏆 {player_b} has the higher TAR")
         else:
-            st.info("🤝 Tie")
+            st.info("🤝 Even matchup")
 
     except Exception as e:
         st.error(str(e))
