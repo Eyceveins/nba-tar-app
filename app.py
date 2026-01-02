@@ -124,9 +124,11 @@ def calculate_tar(player, year):
     AOR *= shooting_factor
 
     # -----------------------------
-    # Defensive factors (role-aware)
+    # Defensive factors (team-relative DRtg)
     # -----------------------------
-    drtg_factor = drtg_avg / p["DRtg"]
+    # Compute team average DRtg
+    team_drtg = league_avg(df[df['Tm_poss']==p['Tm_poss']]['DRtg'])
+    adj_drtg = team_drtg - p["DRtg"]  # Positive if player is better than team average
     drb_factor = p["DRB"] / drb_avg
     stl_factor = p["STL"] / stl_avg
     blk_factor = p["BLK"] / blk_avg
@@ -135,15 +137,15 @@ def calculate_tar(player, year):
     stl_factor = min(stl_factor, 1.6)
     blk_factor = min(blk_factor, 1.6)
     drb_factor = min(drb_factor, 1.6)
-    drtg_factor = math.sqrt(drtg_factor)
+    adj_drtg_factor = math.sqrt(max(adj_drtg/5,0.1))  # soften extreme values
 
     pos = p["Pos_poss"]
     if pos in ["PG","SG"]:
-        ADR = 0.45*drtg_factor + 0.35*stl_factor + 0.15*drb_factor + 0.05*blk_factor
+        ADR = 0.45*adj_drtg_factor + 0.35*stl_factor + 0.15*drb_factor + 0.05*blk_factor
     elif pos == "SF":
-        ADR = 0.40*drtg_factor + 0.25*drb_factor + 0.20*stl_factor + 0.15*blk_factor
+        ADR = 0.40*adj_drtg_factor + 0.25*drb_factor + 0.20*stl_factor + 0.15*blk_factor
     else:
-        ADR = 0.35*drtg_factor + 0.30*drb_factor + 0.10*stl_factor + 0.25*blk_factor
+        ADR = 0.35*adj_drtg_factor + 0.30*drb_factor + 0.10*stl_factor + 0.25*blk_factor
 
     # Minute factor
     minute_factor = min(1.0, p["MP"]/mp_avg)
@@ -173,7 +175,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🏀 NBA TAR Player Comparison")
-st.write("Compare players across seasons with Total Adjusted Rating (TAR). Weighted additive formula with shooting boost.")
+st.write("Compare players across seasons with Total Adjusted Rating (TAR). Weighted additive formula with shooting boost and team-relative defense.")
 
 col1, col2 = st.columns(2)
 with col1:
